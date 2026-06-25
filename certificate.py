@@ -1,0 +1,159 @@
+"""Generate an internship completion certificate as a PDF.
+
+Pure-Python (reportlab + optional svglib for the logo). No native
+dependencies, so it installs and runs anywhere with `pip install`.
+"""
+
+from __future__ import annotations
+
+import io
+from dataclasses import dataclass
+from pathlib import Path
+
+from reportlab.lib.colors import HexColor
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.utils import simpleSplit
+from reportlab.pdfgen import canvas
+
+# Brand palette
+GOLD = HexColor("#b08d40")
+GOLD_LIGHT = HexColor("#d8c48a")
+INK = HexColor("#1f2d3d")
+GREY = HexColor("#5a5a5a")
+MUTE = HexColor("#888888")
+CREAM = HexColor("#fcfcfb")
+
+PAGE_SIZE = landscape(A4)  # 842 x 595 pts
+DEFAULT_LOGO = Path(__file__).parent / "logo" / "Appointza_logo.svg"
+
+
+@dataclass
+class CertificateData:
+    name: str
+    domain: str
+    duration: str
+    details: str = ""
+    completion_date: str = ""
+    company: str = "Appointza"
+
+
+def _draw_logo(c: canvas.Canvas, logo_path: Path, center_x: float, top_y: float,
+               max_width: float = 150, max_height: float = 70) -> float:
+    """Draw the logo centered horizontally with its top edge at top_y.
+
+    Returns the height consumed (0 if no logo could be drawn).
+    """
+    if not logo_path or not Path(logo_path).exists():
+        return 0
+    try:
+        from reportlab.graphics import renderPDF
+        from svglib.svglib import svg2rlg
+    except Exception:
+        return 0
+    try:
+        drawing = svg2rlg(str(logo_path))
+    except Exception:
+        return 0
+    if not drawing or not getattr(drawing, "width", 0) or not getattr(drawing, "height", 0):
+        return 0
+
+    scale = min(max_width / drawing.width, max_height / drawing.height)
+    width = drawing.width * scale
+    height = drawing.height * scale
+    drawing.width = width
+    drawing.height = height
+    drawing.scale(scale, scale)
+
+    x = center_x - width / 2
+    y = top_y - height
+    renderPDF.draw(drawing, c, x, y)
+    return height
+
+
+def _centered(c: canvas.Canvas, text: str, x: float, y: float, font: str, size: float, color) -> None:
+    c.setFont(font, size)
+    c.setFillColor(color)
+    c.drawCentredString(x, y, text)
+
+
+def build_certificate_pdf(data: CertificateData, logo_path: Path | None = None) -> bytes:
+    """Render the certificate and return the PDF as bytes."""
+    width, height = PAGE_SIZE
+    cx = width / 2
+
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=PAGE_SIZE)
+
+    # Background
+    c.setFillColor(CREAM)
+    c.rect(0, 0, width, height, stroke=0, fill=1)
+
+    # Decorative borders
+    c.setStrokeColor(GOLD)
+    c.setLineWidth(5)
+    c.roundRect(24, 24, width - 48, height - 48, 16, stroke=1, fill=0)
+    c.setStrokeColor(GOLD_LIGHT)
+    c.setLineWidth(1.2)
+    c.roundRect(40, 40, width - 80, height - 80, 12, stroke=1, fill=0)
+
+    # Logo near the top
+    logo = Path(logo_path) if logo_path else DEFAULT_LOGO
+    _draw_logo(c, logo, cx, height - 70, max_width=150, max_height=66)
+
+    # Title block
+    _centered(c, "CERTIFICATE OF COMPLETION", cx, height - 165, "Helvetica-Bold", 22, GOLD)
+    c.setStrokeColor(GOLD)
+    c.setLineWidth(1)
+    c.line(cx - 150, height - 178, cx + 150, height - 178)
+    _centered(c, "This certificate is proudly presented to", cx, height - 205, "Helvetica", 13, GREY)
+
+    # Recipient name
+    _centered(c, data.name or "Recipient Name", cx, height - 255, "Helvetica-Bold", 36, INK)
+
+    # Domain / role line
+    _centered(c, "for successfully completing the internship in", cx, height - 295, "Helvetica", 14, GREY)
+    _centered(c, data.domain or "—", cx, height - 325, "Helvetica-Bold", 20, INK)
+
+    # Duration
+    duration_text = f"Duration: {data.duration}" if data.duration else ""
+    if duration_text:
+        _centered(c, duration_text, cx, height - 358, "Helvetica", 13, GREY)
+
+    # Details paragraph (wrapped, centered)
+    if data.details:
+        c.setFont("Helvetica-Oblique", 12)
+        c.setFillColor(GREY)
+        max_text_width = width - 280
+        lines = simpleSplit(data.details, "Helvetica-Oblique", 12, max_text_width)
+        y = height - 388
+        for line in lines[:4]:  # keep the layout tidy
+            c.drawCentredString(cx, y, line)
+            y -= 18
+
+    # Signatures
+    sig_y = 120
+    left_x = 200
+    right_x = width - 200
+    c.setStrokeColor(GOLD)
+    c.setLineWidth(1)
+    c.line(left_x - 90, sig_y, left_x + 90, sig_y)
+    c.line(right_x - 90, sig_y, right_x + 90, sig_y)
+
+    _centered(c, data.company or "Appointza", left_x, sig_y - 22, "Helvetica-Bold", 14, INK)
+    _centered(c, "Authorized by", left_x, sig_y - 40, "Helvetica", 11, MUTE)
+
+    _centered(c, "Appointza", right_x, sig_y - 22, "Helvetica-Bold", 14, INK)
+    _centered(c, "Issued by", right_x, sig_y - 40, "Helvetica", 11, MUTE)
+
+    # Completion date (center, above footer)
+    if data.completion_date:
+        _centered(c, f"Issued on {data.completion_date}", cx, sig_y - 10, "Helvetica", 12, GREY)
+
+    # Footer
+    _centered(c, "Generated by the Appointza Internship Certificate Generator",
+              cx, 56, "Helvetica", 9, MUTE)
+
+    c.showPage()
+    c.save()
+    buffer.seek(0)
+    return buffer.read()

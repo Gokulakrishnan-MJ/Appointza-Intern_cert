@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Appointza · Internship Certificate Generator</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">APPOINTZA</div>
+    <div class="tagline">Internship Certificate Generator</div>
+  </header>
+
+  <main class="layout">
+    <section class="panel form-panel">
+      <h1>Certificate details</h1>
+      <p class="hint">Fill in the details below and click <strong>Preview</strong>.</p>
+
+      <form id="cert-form">
+        <label>
+          Intern name <span class="req">*</span>
+          <input type="text" name="name" required placeholder="e.g. Aarav Sharma" />
+        </label>
+
+        <label>
+          Domain worked on <span class="req">*</span>
+          <input type="text" name="domain" required placeholder="e.g. Full-Stack Web Development" />
+        </label>
+
+        <label>
+          Internship duration
+          <input type="text" name="duration" placeholder="e.g. 3 Months (Apr – Jun 2026)" />
+        </label>
+
+        <label>
+          Internship details
+          <textarea name="details" rows="3"
+            placeholder="A short description of the work, projects, or responsibilities."></textarea>
+        </label>
+
+        <div class="row">
+          <label>
+            Completion date
+            <input type="text" name="completion_date" value="{{ today }}" />
+          </label>
+          <label>
+            Issuing company
+            <input type="text" name="company" value="Appointza" />
+          </label>
+        </div>
+
+        <div class="actions">
+          <button type="submit" class="btn primary">Preview certificate</button>
+          <button type="button" id="download-btn" class="btn" disabled>Download PDF</button>
+        </div>
+        <p id="status" class="status"></p>
+      </form>
+    </section>
+
+    <section class="panel preview-panel">
+      <h2>Preview</h2>
+      <div id="preview-wrap" class="preview-wrap empty">
+        <span class="placeholder">Your certificate preview will appear here.</span>
+        <iframe id="preview" title="Certificate preview" hidden></iframe>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const form = document.getElementById("cert-form");
+    const previewWrap = document.getElementById("preview-wrap");
+    const preview = document.getElementById("preview");
+    const placeholder = previewWrap.querySelector(".placeholder");
+    const downloadBtn = document.getElementById("download-btn");
+    const statusEl = document.getElementById("status");
+
+    let lastBlobUrl = null;
+
+    async function buildPdf() {
+      const data = new FormData(form);
+      const res = await fetch("/generate", { method: "POST", body: data });
+      if (!res.ok) {
+        const msg = await res.text();
+        throw new Error(msg || "Failed to generate certificate.");
+      }
+      return res.blob();
+    }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!form.reportValidity()) return;
+      statusEl.textContent = "Generating…";
+      try {
+        const blob = await buildPdf();
+        if (lastBlobUrl) URL.revokeObjectURL(lastBlobUrl);
+        lastBlobUrl = URL.createObjectURL(blob);
+        preview.src = lastBlobUrl;
+        preview.hidden = false;
+        placeholder.hidden = true;
+        previewWrap.classList.remove("empty");
+        downloadBtn.disabled = false;
+        statusEl.textContent = "Preview ready.";
+      } catch (err) {
+        statusEl.textContent = err.message;
+      }
+    });
+
+    downloadBtn.addEventListener("click", async () => {
+      statusEl.textContent = "Preparing download…";
+      try {
+        const data = new FormData(form);
+        data.set("download", "1");
+        const res = await fetch("/generate", { method: "POST", body: data });
+        if (!res.ok) throw new Error("Download failed.");
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        const name = (form.elements["name"].value || "certificate").trim().replace(/[^A-Za-z0-9_-]+/g, "_");
+        a.href = url;
+        a.download = `${name || "certificate"}_certificate.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        statusEl.textContent = "Downloaded.";
+      } catch (err) {
+        statusEl.textContent = err.message;
+      }
+    });
+  </script>
+</body>
+</html>
